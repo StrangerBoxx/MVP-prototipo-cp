@@ -526,9 +526,6 @@ a { color: inherit; text-decoration: none; }
 .rx-check-row input[type="checkbox"] { width: 16px; height: 16px; flex: none; accent-color: var(--accent); }
 .rx-actions { display: flex; align-items: center; gap: 12px; }
 .rx-stop-actions { display: flex; align-items: center; gap: 6px; flex: none; }
-.rx-test-zone { display: flex; align-items: center; justify-content: space-between; gap: 16px; background: var(--red-bg); border: 1px dashed var(--red-fg); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 18px; color: var(--red-fg); }
-.btn-test { background: var(--red-fg); color: #fff; border-color: var(--red-fg); white-space: nowrap; }
-.btn-test:hover { background: var(--red-dot); border-color: var(--red-dot); }
 .move-item .mi-zone { font-size: 11px; color: var(--text-3); }
 
 /* ---- Disponibilidad semanal (Técnicos) ---- */

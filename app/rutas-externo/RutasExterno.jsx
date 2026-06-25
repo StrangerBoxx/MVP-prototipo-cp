@@ -45,8 +45,8 @@ function rxSave(key, value) {
 
 /* ---- Panel de selección (HU-01) ---- */
 function SeleccionPanel({ otsDelDia, tecnicosDisponibles, otsSel, tecSel, toggleOt, toggleTec, onOptimizar }) {
-  const otsCount = Object.values(otsSel).filter(Boolean).length;
-  const tecCount = Object.values(tecSel).filter(Boolean).length;
+  const otsCount = otsDelDia.filter(o => otsSel[o.id]).length;
+  const tecCount = tecnicosDisponibles.filter(t => tecSel[t.id]).length;
   const puedeOptimizar = otsCount > 0 && tecCount > 0;
 
   return (
@@ -68,7 +68,6 @@ function SeleccionPanel({ otsDelDia, tecnicosDisponibles, otsSel, tecSel, toggle
                     <div className="row-flex" style={{ gap: 7 }}>
                       <span className="id-pill">{ot.id}</span>
                       <span className="cell-strong">{ot.cliente}</span>
-                      {ot.esTest && <Badge cls="b-red" dot={false}>TEST</Badge>}
                     </div>
                     <div className="stop-dir"><Icon name="pin" style={{ width: 12, height: 12 }} />{ot.direccion}</div>
                   </div>
@@ -165,7 +164,6 @@ function RouteEditCard({ tecnico, paradas, otrosTecnicos, onMoveUp, onMoveDown, 
                 <div className="row-flex" style={{ gap: 7 }}>
                   <span className="id-pill">{ot.id}</span>
                   <span className="stop-cliente">{ot.cliente}</span>
-                  {ot.esTest && <Badge cls="b-red" dot={false}>TEST</Badge>}
                 </div>
                 <div className="stop-dir"><Icon name="pin" style={{ width: 12, height: 12 }} />{ot.direccion}</div>
               </div>
@@ -231,7 +229,6 @@ function PropuestaPanel({ propuesta, error, onMoveUp, onMoveDown, onMover, onEli
                   <div className="row-flex" style={{ gap: 7 }}>
                     <span className="id-pill">{ot.id}</span>
                     <span className="cell-strong">{ot.cliente}</span>
-                    {ot.esTest && <Badge cls="b-red" dot={false}>TEST</Badge>}
                   </div>
                   <div className="stop-dir"><Icon name="pin" style={{ width: 12, height: 12 }} />{ot.direccion}</div>
                 </div>
@@ -251,7 +248,7 @@ function PropuestaPanel({ propuesta, error, onMoveUp, onMoveDown, onMover, onEli
 }
 
 /* ---- Bloque read-only de rutas ya confirmadas hoy ---- */
-function ConfirmadoBanner({ confirmado }) {
+function ConfirmadoBanner({ confirmado, onEditar, onEliminar }) {
   const tecIds = Object.keys(confirmado.porTecnico);
   return (
     <div className="route-banner" style={{ flexDirection: "column", alignItems: "stretch", gap: 10 }}>
@@ -259,6 +256,9 @@ function ConfirmadoBanner({ confirmado }) {
         <Icon name="checkC" />
         <b>Rutas confirmadas de hoy</b>
         <span className="cell-muted">· {confirmado.fecha}</span>
+        <div className="spacer" />
+        <button className="btn btn-sm" onClick={onEditar}>Editar</button>
+        <button className="btn btn-sm" onClick={onEliminar}><Icon name="x" />Eliminar rutas confirmadas</button>
       </div>
       <div className="row-flex" style={{ gap: 18, flexWrap: "wrap" }}>
         {tecIds.map(tid => {
@@ -275,57 +275,20 @@ function ConfirmadoBanner({ confirmado }) {
   );
 }
 
-/* ---- Zona de testeo: OTs inventadas en memoria, nunca persistidas ----
-   Solo sirven para jugar con el asignador/optimizador. No tocan
-   CP_DATA ni sessionStorage; se pierden al recargar la página. ---- */
-// Mismas zonas donde hay técnicos reales (ver LATLNG_POR_TECNICO en data.js),
-// para que el testeo pueda generar trabajo cerca de cualquiera, no solo de
-// los que ya están en Santiago.
-const RX_TEST_ZONAS = [
-  { nombre: "Santiago", lat: -33.45, lng: -70.66 },
-  { nombre: "Calama", lat: -22.4567, lng: -68.9277 },
-  { nombre: "Copiapó", lat: -27.3668, lng: -70.3322 },
-  { nombre: "Iquique", lat: -20.2133, lng: -70.1503 },
-  { nombre: "Antofagasta", lat: -23.6509, lng: -70.3975 },
-];
-function generarOtsTest(n = 6) {
-  const clientes = ["Cliente Test Andes", "Cliente Test Maipo", "Cliente Test Centro", "Cliente Test Norte", "Cliente Test Sur", "Cliente Test Poniente"];
-  const calles = ["Calle Ficticia", "Av. Prueba", "Pasaje Demo", "Camino Testeo", "Ruta Simulada"];
-  const base = Date.now();
-  return Array.from({ length: n }, (_, i) => {
-    const horaIni = 8 + Math.floor(Math.random() * 7); // 08:00–14:00
-    const horaFin = Math.min(horaIni + 2 + Math.floor(Math.random() * 3), 20);
-    const zona = RX_TEST_ZONAS[Math.floor(Math.random() * RX_TEST_ZONAS.length)];
-    return {
-      id: `TEST-${base}-${i + 1}`,
-      cliente: clientes[Math.floor(Math.random() * clientes.length)],
-      direccion: `${calles[Math.floor(Math.random() * calles.length)]} ${100 + Math.floor(Math.random() * 900)}, ${zona.nombre} (testeo)`,
-      ventanaInicio: String(horaIni).padStart(2, "0") + ":00",
-      ventanaFin: String(horaFin).padStart(2, "0") + ":00",
-      lat: zona.lat + (Math.random() - 0.5) * 0.1,
-      lng: zona.lng + (Math.random() - 0.5) * 0.1,
-      esTest: true,
-    };
-  });
-}
-
 /* ---- Pantalla raíz: orquesta selección → propuesta → confirmación ---- */
 function RutasExternoScreen() {
-  const { otsDelDia: otsReales, tecnicosDisponibles } = window.RUTAS_EXTERNO_DATA;
-  const [otsTest, setOtsTest] = useState([]); // nunca se persiste a propósito
-  const otsDelDia = [...otsReales, ...otsTest];
+  // HU-01: técnicos disponibles y OT elegibles del día, ambos desde el mock real (Render).
+  const [tecnicosDisponibles, setTecnicosDisponibles] = useState([]);
+  const [otsDelDiaCrudo, setOtsDelDiaCrudo] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [errorCarga, setErrorCarga] = useState(null);
 
   // Reconcilia contra los ids actuales: una selección vieja en sessionStorage
   // (de OTs/técnicos que ya no existen con esos ids) no debe dejar la
   // selección "vacía" silenciosamente — los ids nuevos entran pre-tildados.
-  const [otsSel, setOtsSel] = useState(() => {
-    const stored = rxLoad(RX_KEYS.otsSel, {});
-    return Object.fromEntries(otsDelDia.map(o => [o.id, o.id in stored ? stored[o.id] : true]));
-  });
-  const [tecSel, setTecSel] = useState(() => {
-    const stored = rxLoad(RX_KEYS.tecSel, {});
-    return Object.fromEntries(tecnicosDisponibles.map(t => [t.id, t.id in stored ? stored[t.id] : true]));
-  });
+  const [otsSel, setOtsSel] = useState({});
+  const [tecSel, setTecSel] = useState({});
+
   // La etapa NO se persiste: cada vez que se entra al módulo (click en
   // "Asignar rutas") se arranca siempre en selección, sin importar dónde
   // se haya quedado la última visita. La selección/propuesta/confirmación
@@ -335,6 +298,57 @@ function RutasExternoScreen() {
   const [confirmado, setConfirmado] = useState(() => rxLoad(RX_KEYS.confirmado, null));
   const [error, setError] = useState(null);
 
+  // Las OT que ya quedaron en un plan confirmado no se vuelven a ofrecer como
+  // elegibles (el write-back al mock sigue diferido — esto es un filtro local
+  // para no proponer dos veces lo mismo). "Eliminar rutas confirmadas" las
+  // devuelve al pool de elegibles.
+  const otsConfirmadasIds = useMemo(() => {
+    const ids = new Set();
+    if (confirmado) {
+      Object.values(confirmado.porTecnico).forEach(({ paradas }) => paradas.forEach(o => ids.add(o.id)));
+    }
+    return ids;
+  }, [confirmado]);
+  const otsDelDia = useMemo(
+    () => otsDelDiaCrudo.filter(o => !otsConfirmadasIds.has(o.id)),
+    [otsDelDiaCrudo, otsConfirmadasIds]
+  );
+
+  useEffect(() => {
+    let activo = true;
+    setCargando(true);
+    setErrorCarga(null);
+    Promise.all([
+      window.RUTAS_EXTERNO_API.obtenerTecnicosDisponibles(),
+      window.RUTAS_EXTERNO_API.obtenerOtsDelDia(),
+    ])
+      .then(([tecnicos, ots]) => {
+        if (!activo) return;
+        setTecnicosDisponibles(tecnicos);
+        setOtsDelDiaCrudo(ots);
+        const storedTec = rxLoad(RX_KEYS.tecSel, {});
+        setTecSel(Object.fromEntries(tecnicos.map(t => [t.id, t.id in storedTec ? storedTec[t.id] : true])));
+        const storedOts = rxLoad(RX_KEYS.otsSel, {});
+        const elegibles = ots.filter(o => !otsConfirmadasIds.has(o.id));
+        setOtsSel(Object.fromEntries(elegibles.map(o => [o.id, o.id in storedOts ? storedOts[o.id] : true])));
+      })
+      .catch(err => { if (activo) setErrorCarga(err.message); })
+      .finally(() => { if (activo) setCargando(false); });
+    return () => { activo = false; };
+  }, []);
+
+  // Si se elimina la confirmación, las OT que vuelven a quedar elegibles
+  // necesitan entrar a otsSel (pre-tildadas) — quedaron afuera al cargar
+  // porque en ese momento estaban dentro de un plan confirmado.
+  useEffect(() => {
+    setOtsSel(prev => {
+      let changed = false;
+      const next = { ...prev };
+      otsDelDia.forEach(o => { if (!(o.id in next)) { next[o.id] = true; changed = true; } });
+      return changed ? next : prev;
+    });
+  }, [otsDelDia]);
+
   useEffect(() => rxSave(RX_KEYS.otsSel, otsSel), [otsSel]);
   useEffect(() => rxSave(RX_KEYS.tecSel, tecSel), [tecSel]);
   useEffect(() => rxSave(RX_KEYS.propuesta, propuesta), [propuesta]);
@@ -342,11 +356,17 @@ function RutasExternoScreen() {
 
   const toggleOt = id => setOtsSel(prev => ({ ...prev, [id]: !prev[id] }));
   const toggleTec = id => setTecSel(prev => ({ ...prev, [id]: !prev[id] }));
+  const onEliminarConfirmado = () => setConfirmado(null);
 
-  const onGenerarTest = () => {
-    const nuevas = generarOtsTest();
-    setOtsTest(nuevas);
-    setOtsSel(prev => ({ ...prev, ...Object.fromEntries(nuevas.map(o => [o.id, true])) }));
+  // Reabre el plan confirmado en el panel de edición (mismas acciones de
+  // HU-03: reordenar/mover/eliminar). Si se vuelve a confirmar, reemplaza
+  // por completo la confirmación anterior; si se "vuelve a selección" sin
+  // confirmar, la confirmación original queda intacta (no se tocó todavía).
+  const onEditarConfirmado = () => {
+    if (!confirmado) return;
+    setPropuesta({ porTecnico: deepClone(confirmado.porTecnico), pendientes: [] });
+    setError(null);
+    setEtapa("propuesta");
   };
 
   const onOptimizar = () => {
@@ -402,21 +422,19 @@ function RutasExternoScreen() {
       <div className="page-head">
         <div>
           <div className="page-title">Asignación de rutas</div>
-          <div className="page-sub">Maqueta Sprint 1 · HU-01, HU-02, HU-03 — datos placeholder</div>
+          <div className="page-sub">Maqueta Sprint 1 · HU-01, HU-02, HU-03 — técnicos desde el mock real (Render); OT pendiente</div>
         </div>
       </div>
 
-      <div className="rx-test-zone">
-        <div>
-          <b>Zona de testeo</b>
-          <div className="cell-muted" style={{ fontSize: 12 }}>Genera OTs inventadas en memoria para probar el asignador/optimizador. Nunca se guardan ni afectan datos reales — se pierden al recargar.</div>
-        </div>
-        <button className="btn btn-test" onClick={onGenerarTest}><Icon name="refresh" />Generar OTs del Día (Zona de Testeo)</button>
-      </div>
+      {etapa === "seleccion" && confirmado && (
+        <ConfirmadoBanner confirmado={confirmado} onEditar={onEditarConfirmado} onEliminar={onEliminarConfirmado} />
+      )}
 
-      {etapa === "seleccion" && confirmado && <ConfirmadoBanner confirmado={confirmado} />}
-
-      {etapa === "seleccion" ? (
+      {cargando ? (
+        <div className="card empty"><Icon name="refresh" />Cargando datos del día…</div>
+      ) : errorCarga ? (
+        <div className="card empty"><Icon name="alert" />No se pudo cargar el mock: {errorCarga}</div>
+      ) : etapa === "seleccion" ? (
         <SeleccionPanel otsDelDia={otsDelDia} tecnicosDisponibles={tecnicosDisponibles}
           otsSel={otsSel} tecSel={tecSel} toggleOt={toggleOt} toggleTec={toggleTec} onOptimizar={onOptimizar} />
       ) : (
