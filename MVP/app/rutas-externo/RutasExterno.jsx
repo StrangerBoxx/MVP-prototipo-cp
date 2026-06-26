@@ -185,10 +185,6 @@ function RxMoveMenu({ otros, onMove, onClose }) {
 /* ---- Tarjeta de ruta editable por técnico (HU-03) ---- */
 function RouteEditCard({ tecnico, paradas, otrosTecnicos, onMoveUp, onMoveDown, onMover, onEliminar }) {
   const [menuFor, setMenuFor] = useState(null);
-  // Hora de llegada estimada a cada parada, recalculada según el orden
-  // actual de la ruta — no la ventana genérica de la OT (siempre 08:00–18:00
-  // para las elegibles), que no decía nada sobre el orden real de visita.
-  const llegadas = window.RUTAS_EXTERNO_OPTIMIZER.calcularLlegadas(tecnico, paradas);
   return (
     <div className={"route-card" + (menuFor ? " menu-open" : "")}>
       <div className="route-head">
@@ -217,10 +213,6 @@ function RouteEditCard({ tecnico, paradas, otrosTecnicos, onMoveUp, onMoveDown, 
                 </div>
                 <div className="stop-dir"><Icon name="pin" style={{ width: 12, height: 12 }} />{ot.direccion}</div>
               </div>
-              <span className={"badge " + (llegadas[i].factible ? "b-slate" : "b-amber")} style={{ flex: "none" }}
-                title={llegadas[i].factible ? "Hora programada de la OT" : "Hora programada de la OT — con el orden actual de la ruta, el técnico llegaría fuera de esta ventana"}>
-                <Icon name="clock" />{ot.ventanaInicio}–{ot.ventanaFin}
-              </span>
               <div className="rx-stop-actions">
                 <button className="btn btn-sm" disabled={i === 0} onClick={() => onMoveUp(tecnico.id, ot.id)} title="Subir"><Icon name="chevD" style={{ transform: "rotate(180deg)" }} /></button>
                 <button className="btn btn-sm" disabled={i === paradas.length - 1} onClick={() => onMoveDown(tecnico.id, ot.id)} title="Bajar"><Icon name="chevD" /></button>
@@ -272,10 +264,6 @@ function PendienteRow({ ot, tecnicos, onMover }) {
 /* ---- Panel de propuesta + edición + confirmación (HU-02/HU-03) ---- */
 function PropuestaPanel({ propuesta, error, onMoveUp, onMoveDown, onMover, onEliminar, onMoverPendiente, onVolver, onConfirmar }) {
   const tecIds = Object.keys(propuesta.porTecnico);
-  // Validación en vivo (no bloquea) — se recalcula con cada cambio de la
-  // propuesta para avisar de paradas fuera de ventana mientras se edita,
-  // no solo al hacer clic en "Confirmar plan".
-  const { fueraDeVentana } = window.RUTAS_EXTERNO_OPTIMIZER.validarConfirmacion(propuesta.porTecnico);
   return (
     <>
       {error && (
@@ -285,31 +273,12 @@ function PropuestaPanel({ propuesta, error, onMoveUp, onMoveDown, onMover, onEli
         </div>
       )}
 
-      {fueraDeVentana.length > 0 && (
-        <div className="card" style={{ borderColor: "var(--amber-dot)", background: "var(--amber-bg)", color: "var(--amber-fg)", display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 16px", marginBottom: 16 }}>
-          <Icon name="alert" style={{ width: 18, height: 18, color: "var(--amber-dot)", flex: "none", marginTop: 2 }} />
-          <div>
-            <b>{fueraDeVentana.length} parada{fueraDeVentana.length === 1 ? "" : "s"} fuera de su ventana programada</b> con el orden actual de la ruta. Puedes confirmar igual, o ajustar el orden/asignación antes.
-          </div>
-        </div>
-      )}
-
       {tecIds.every(tid => propuesta.porTecnico[tid].paradas.length === 0) ? (
         <div className="card empty"><Icon name="checkC" />Ningún técnico tiene OTs asignadas todavía.</div>
       ) : (
         <div className="routes-grid">
           {tecIds
             .filter(tid => propuesta.porTecnico[tid].paradas.length > 0)
-            // En el mosaico, las rutas se ordenan por la hora de su primera
-            // parada (no por el orden en que las devolvió el optimizador) —
-            // así el técnico que arranca más temprano queda primero.
-            .sort((a, b) => {
-              const { tecnico: tA, paradas: pA } = propuesta.porTecnico[a];
-              const { tecnico: tB, paradas: pB } = propuesta.porTecnico[b];
-              const llegadaA = window.RUTAS_EXTERNO_OPTIMIZER.calcularLlegadas(tA, pA)[0].llegada;
-              const llegadaB = window.RUTAS_EXTERNO_OPTIMIZER.calcularLlegadas(tB, pB)[0].llegada;
-              return llegadaA - llegadaB;
-            })
             .map(tid => {
             const { tecnico, paradas } = propuesta.porTecnico[tid];
             // Para "Mover" se ofrecen TODOS los técnicos de la propuesta (no
@@ -581,9 +550,7 @@ function RutasExternoScreen({ onToast }) {
     setPropuesta(null);
     setError(null);
     setEtapa("seleccion");
-    onToast?.(r.fueraDeVentana.length
-      ? `Plan confirmado · ${r.fueraDeVentana.length} parada${r.fueraDeVentana.length === 1 ? "" : "s"} fuera de ventana programada`
-      : "Plan de rutas confirmado");
+    onToast?.("Plan de rutas confirmado");
   };
 
   return (
