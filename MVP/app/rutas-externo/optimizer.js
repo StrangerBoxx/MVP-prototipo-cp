@@ -1,24 +1,17 @@
 /* ============================================================
-   Optimizador mock — HU-02 (propuesta) / HU-03 (re-validación)
+   Soporte de rutas — HU-03 (edición/re-validación de la propuesta)
    ------------------------------------------------------------
-   Funciones puras, sin estado: (ots, técnicos) → propuesta /
-   (propuesta) → válida|inválida+razón. En Sprint 1 el servicio
-   real (HU-07/08, OR-Tools VRPTW) lo construye el equipo de
-   optimización; esto es un placeholder con la misma forma de
-   entrada/salida para poder maquetar la UI ya mismo.
+   Funciones puras, sin estado, sobre distancia real (haversine):
+   re-validar una propuesta editada a mano y recalcular horas de
+   llegada para mostrarlas en pantalla. El cálculo de la propuesta
+   en sí (HU-02, asignación inicial OT↔técnico) ya no se hace acá
+   — lo resuelve el servicio real de optimización (OR-Tools VRPTW,
+   ver app/rutas-externo/data.js → optimizarRemoto()).
    ============================================================ */
 (function () {
   const VELOCIDAD_KMH = 35;
   const SERVICIO_MIN = 20;
   const JORNADA_INICIO_MIN = 8 * 60; // 08:00
-  // Dos técnicos se consideran "igual de cerca" de una OT si la diferencia
-  // entre sus distancias es menor a este margen — ahí (y solo ahí) se usa la
-  // carga del día para desempatar. Fuera de ese margen manda la cercanía
-  // real, así no se le manda una OT a un técnico lejano solo por tener
-  // menos paradas asignadas (esa mezcla lineal era lo que producía rutas
-  // sin sentido geográfico, ej. técnico de una punta de Santiago asignado
-  // a una OT al otro extremo habiendo uno cercano disponible).
-  const TOLERANCIA_CERCANIA_KM = 3;
 
   function haversineKm(a, b) {
     const R = 6371;
@@ -46,55 +39,6 @@
     return { dist, llegada, factible };
   }
 
-  /* (ots, técnicos) → { porTecnico: { [tecnicoId]: { tecnico, paradas: [ot,...] } }, pendientes: [ot,...] } */
-  function proponerAsignacion(ots, tecnicos) {
-    const porTecnico = {};
-    const estado = {};
-    tecnicos.forEach(t => {
-      porTecnico[t.id] = { tecnico: t, paradas: [] };
-      estado[t.id] = { pos: { lat: t.lat, lng: t.lng }, clock: JORNADA_INICIO_MIN };
-    });
-
-    let pool = ots.slice();
-    const pendientes = [];
-
-    if (!tecnicos.length) return { porTecnico, pendientes: pool };
-
-    while (pool.length) {
-      let mejor = null; // { ot, tecnicoId, llegada, distMin }
-      pool.forEach(ot => {
-        // Técnicos factibles para esta OT, ordenados por cercanía real.
-        const candidatos = tecnicos
-          .map(t => {
-            const e = estado[t.id];
-            const r = evaluarLlegada(e.pos, e.clock, ot);
-            return r.factible ? { t, r, carga: porTecnico[t.id].paradas.length } : null;
-          })
-          .filter(Boolean)
-          .sort((a, b) => a.r.dist - b.r.dist);
-        if (!candidatos.length) return;
-        const distMin = candidatos[0].r.dist;
-        // Entre los que están casi igual de cerca, se prioriza al de menor carga.
-        const elegido = candidatos
-          .filter(c => c.r.dist <= distMin + TOLERANCIA_CERCANIA_KM)
-          .sort((a, b) => a.carga - b.carga)[0];
-        // Entre OTs se resuelve primero la que tiene un técnico realmente
-        // más cerca (no la que tiene menos carga) — así la ruta se va
-        // armando de adentro hacia afuera, sin saltos geográficos.
-        if (!mejor || distMin < mejor.distMin) {
-          mejor = { ot, tecnicoId: elegido.t.id, llegada: elegido.r.llegada, distMin };
-        }
-      });
-      if (!mejor) { pendientes.push(...pool); break; }
-      porTecnico[mejor.tecnicoId].paradas.push(mejor.ot);
-      estado[mejor.tecnicoId].pos = { lat: mejor.ot.lat, lng: mejor.ot.lng };
-      estado[mejor.tecnicoId].clock = mejor.llegada + SERVICIO_MIN;
-      pool = pool.filter(o => o.id !== mejor.ot.id);
-    }
-
-    return { porTecnico, pendientes };
-  }
-
   /* (técnico, paradas en su orden actual) → [{ id, llegada, factible }, ...]
      Recalcula la hora de llegada estimada a cada parada siguiendo el orden
      real de la ruta (no la ventana genérica de la OT) — así, al reordenar
@@ -111,28 +55,36 @@
     });
   }
 
-  /* propuesta editada → { ok: true } | { ok: false, razon } */
+  /* propuesta editada → { ok, duplicado, fueraDeVentana }
+     - duplicado: razón si una OT quedó en más de un técnico (bug de
+       integridad — esto sí bloquea la confirmación).
+     - fueraDeVentana: lista de avisos de paradas que, con el orden actual
+       de la ruta, llegarían fuera de su ventana programada. No bloquea —
+       la coordinadora puede confirmar igual a sabiendas del riesgo (las
+       distancias del optimizador remoto todavía son aproximadas). */
   function validarConfirmacion(porTecnico) {
     const vistos = new Set();
+    let duplicado = null;
+    const fueraDeVentana = [];
     for (const tecnicoId of Object.keys(porTecnico)) {
       const { tecnico, paradas } = porTecnico[tecnicoId];
       let pos = { lat: tecnico.lat, lng: tecnico.lng };
       let clock = JORNADA_INICIO_MIN;
       for (const ot of paradas) {
         if (vistos.has(ot.id)) {
-          return { ok: false, razon: `${ot.id} está asignada a más de un técnico.` };
+          duplicado = `${ot.id} está asignada a más de un técnico.`;
         }
         vistos.add(ot.id);
         const r = evaluarLlegada(pos, clock, ot);
         if (!r.factible) {
-          return { ok: false, razon: `${ot.id} en la ruta de ${tecnico.nombre}: llegada estimada ${minAHhmm(r.llegada)}, fuera de la ventana ${ot.ventanaInicio}–${ot.ventanaFin}.` };
+          fueraDeVentana.push(`${ot.id} en la ruta de ${tecnico.nombre}: llegada estimada ${minAHhmm(r.llegada)}, fuera de la ventana ${ot.ventanaInicio}–${ot.ventanaFin}.`);
         }
         pos = { lat: ot.lat, lng: ot.lng };
         clock = r.llegada + SERVICIO_MIN;
       }
     }
-    return { ok: true };
+    return { ok: !duplicado, duplicado, fueraDeVentana };
   }
 
-  window.RUTAS_EXTERNO_OPTIMIZER = { proponerAsignacion, validarConfirmacion, calcularLlegadas, haversineKm, minAHhmm };
+  window.RUTAS_EXTERNO_OPTIMIZER = { validarConfirmacion, calcularLlegadas, haversineKm, minAHhmm };
 })();

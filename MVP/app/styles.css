@@ -221,7 +221,7 @@ a { color: inherit; text-decoration: none; }
 .tbl tbody tr.clickable:hover { background: var(--surface-2); }
 .cell-strong { font-weight: 600; }
 .cell-muted { color: var(--text-2); }
-.id-pill { font-family: var(--mono); font-size: 12.5px; font-weight: 600; color: var(--accent-strong); }
+.id-pill { font-family: var(--mono); font-size: 12.5px; font-weight: 600; color: var(--accent-strong); white-space: nowrap; flex: none; }
 
 /* person cell */
 .person { display: flex; align-items: center; gap: 9px; }
@@ -482,9 +482,12 @@ a { color: inherit; text-decoration: none; }
 .route-banner { display: flex; align-items: center; gap: 12px; background: var(--accent-softer); border: 1px solid var(--accent-soft); border-radius: var(--radius); padding: 14px 18px; font-size: 13px; color: var(--text-2); margin-bottom: 22px; }
 .route-banner svg { width: 20px; height: 20px; color: var(--accent); flex: none; }
 .route-banner b { color: var(--text); }
-.routes-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--gap); align-items: start; }
-@media (max-width: 1080px) { .routes-grid { grid-template-columns: 1fr; } }
-.route-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+/* Columnas CSS (no grid de filas) — cada tarjeta ocupa solo su propia
+   altura, así una ruta corta ("Sin OTs asignadas") no deja un hueco vacío
+   esperando a la tarjeta más alta de su misma fila. */
+.routes-grid { column-count: 2; column-gap: var(--gap); }
+@media (max-width: 1080px) { .routes-grid { column-count: 1; } }
+.route-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; break-inside: avoid; margin-bottom: var(--gap); }
 .route-card.menu-open { overflow: visible; } /* deja que .move-menu se vea/scrollee completo, sin que el borde redondeado lo recorte */
 .route-card.modificada { border-color: var(--violet-dot); box-shadow: 0 0 0 1px var(--violet-dot); }
 .route-head { display: flex; align-items: center; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--border); }
