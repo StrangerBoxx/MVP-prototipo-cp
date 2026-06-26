@@ -517,10 +517,11 @@ a { color: inherit; text-decoration: none; }
 /* ---- Asignación de rutas: selección + edición de propuesta (HU-01/02/03) ---- */
 .rx-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--gap); align-items: start; margin-bottom: 18px; }
 @media (max-width: 1080px) { .rx-grid { grid-template-columns: 1fr; } }
-.rx-card-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 12px; }
+.rx-card-head { display: flex; align-items: center; justify-content: space-between; padding: 0 0 12px; }
 .rx-card-title { font-weight: 640; font-size: 14.5px; }
 .rx-card-count { font-size: 12px; color: var(--text-3); }
 .rx-check-list { display: flex; flex-direction: column; gap: 2px; max-height: 360px; overflow-y: auto; }
+.rx-check-list:has(.move-menu) { overflow: visible; } /* deja que .move-menu se vea completo, sin que el scroll de la lista lo recorte */
 .rx-check-row { display: flex; align-items: center; gap: 12px; padding: 10px 6px; border-radius: 9px; cursor: pointer; }
 .rx-check-row:hover { background: var(--surface-2); }
 .rx-check-row input[type="checkbox"] { width: 16px; height: 16px; flex: none; accent-color: var(--accent); }

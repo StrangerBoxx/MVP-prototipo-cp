@@ -11,6 +11,14 @@
   const VELOCIDAD_KMH = 35;
   const SERVICIO_MIN = 20;
   const JORNADA_INICIO_MIN = 8 * 60; // 08:00
+  // Dos técnicos se consideran "igual de cerca" de una OT si la diferencia
+  // entre sus distancias es menor a este margen — ahí (y solo ahí) se usa la
+  // carga del día para desempatar. Fuera de ese margen manda la cercanía
+  // real, así no se le manda una OT a un técnico lejano solo por tener
+  // menos paradas asignadas (esa mezcla lineal era lo que producía rutas
+  // sin sentido geográfico, ej. técnico de una punta de Santiago asignado
+  // a una OT al otro extremo habiendo uno cercano disponible).
+  const TOLERANCIA_CERCANIA_KM = 3;
 
   function haversineKm(a, b) {
     const R = 6371;
@@ -53,16 +61,29 @@
     if (!tecnicos.length) return { porTecnico, pendientes: pool };
 
     while (pool.length) {
-      let mejor = null; // { ot, tecnicoId, llegada, score }
+      let mejor = null; // { ot, tecnicoId, llegada, distMin }
       pool.forEach(ot => {
-        tecnicos.forEach(t => {
-          const e = estado[t.id];
-          const r = evaluarLlegada(e.pos, e.clock, ot);
-          if (!r.factible) return;
-          const carga = porTecnico[t.id].paradas.length;
-          const score = r.dist * 0.6 + carga * 6 * 0.4; // distancia 60% / carga 40%
-          if (!mejor || score < mejor.score) mejor = { ot, tecnicoId: t.id, llegada: r.llegada, score };
-        });
+        // Técnicos factibles para esta OT, ordenados por cercanía real.
+        const candidatos = tecnicos
+          .map(t => {
+            const e = estado[t.id];
+            const r = evaluarLlegada(e.pos, e.clock, ot);
+            return r.factible ? { t, r, carga: porTecnico[t.id].paradas.length } : null;
+          })
+          .filter(Boolean)
+          .sort((a, b) => a.r.dist - b.r.dist);
+        if (!candidatos.length) return;
+        const distMin = candidatos[0].r.dist;
+        // Entre los que están casi igual de cerca, se prioriza al de menor carga.
+        const elegido = candidatos
+          .filter(c => c.r.dist <= distMin + TOLERANCIA_CERCANIA_KM)
+          .sort((a, b) => a.carga - b.carga)[0];
+        // Entre OTs se resuelve primero la que tiene un técnico realmente
+        // más cerca (no la que tiene menos carga) — así la ruta se va
+        // armando de adentro hacia afuera, sin saltos geográficos.
+        if (!mejor || distMin < mejor.distMin) {
+          mejor = { ot, tecnicoId: elegido.t.id, llegada: elegido.r.llegada, distMin };
+        }
       });
       if (!mejor) { pendientes.push(...pool); break; }
       porTecnico[mejor.tecnicoId].paradas.push(mejor.ot);
@@ -72,6 +93,22 @@
     }
 
     return { porTecnico, pendientes };
+  }
+
+  /* (técnico, paradas en su orden actual) → [{ id, llegada, factible }, ...]
+     Recalcula la hora de llegada estimada a cada parada siguiendo el orden
+     real de la ruta (no la ventana genérica de la OT) — así, al reordenar
+     o mover paradas a mano (HU-03), lo que se muestra en pantalla siempre
+     queda ordenado cronológicamente según la ruta vigente. */
+  function calcularLlegadas(tecnico, paradas) {
+    let pos = { lat: tecnico.lat, lng: tecnico.lng };
+    let clock = JORNADA_INICIO_MIN;
+    return paradas.map(ot => {
+      const r = evaluarLlegada(pos, clock, ot);
+      pos = { lat: ot.lat, lng: ot.lng };
+      clock = r.llegada + SERVICIO_MIN;
+      return { id: ot.id, llegada: r.llegada, factible: r.factible };
+    });
   }
 
   /* propuesta editada → { ok: true } | { ok: false, razon } */
@@ -97,5 +134,5 @@
     return { ok: true };
   }
 
-  window.RUTAS_EXTERNO_OPTIMIZER = { proponerAsignacion, validarConfirmacion, haversineKm, minAHhmm };
+  window.RUTAS_EXTERNO_OPTIMIZER = { proponerAsignacion, validarConfirmacion, calcularLlegadas, haversineKm, minAHhmm };
 })();
