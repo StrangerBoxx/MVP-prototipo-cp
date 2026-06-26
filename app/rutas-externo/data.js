@@ -137,6 +137,17 @@
     return AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length];
   }
 
+  function construirTecnico(t) {
+    return {
+      id: t.id,
+      nombre: `${t.nombre} ${t.apellidos}`,
+      zona: t.zona,
+      tipo: t.tipo,
+      color: colorPorId(String(t.id)),
+      ...latlngPorComuna(t.zona),
+    };
+  }
+
   /* Técnicos disponibles del día: cruza /tecnicos con /disponibilidad?fecha=hoy.
      "disponible" es binario (in/out completo) — así lo pide HU-01. */
   async function obtenerTecnicosDisponibles(fecha = hoyISO()) {
@@ -147,16 +158,20 @@
     const idsDisponibles = new Set(
       disponibilidad.filter(d => d.disponible).map(d => d.tecnico_id)
     );
-    return tecnicos
-      .filter(t => idsDisponibles.has(t.id))
-      .map(t => ({
-        id: t.id,
-        nombre: `${t.nombre} ${t.apellidos}`,
-        zona: t.zona,
-        tipo: t.tipo,
-        color: colorPorId(String(t.id)),
-        ...latlngPorComuna(t.zona),
-      }));
+    return tecnicos.filter(t => idsDisponibles.has(t.id)).map(construirTecnico);
+  }
+
+  // El optimizador remoto (ver optimizarRemoto) elige su propio pool de
+  // técnicos "disponibles hoy" sin avisar cuáles fueron — para mostrar la
+  // propuesta resultante hace falta poder traer cualquier técnico por id,
+  // esté o no en la lista de "disponibles" que carga el panel de selección.
+  async function obtenerTecnicosPorIds(ids) {
+    if (!ids.length) return {};
+    const set = new Set(ids);
+    const tecnicos = await fetchJSON(`${API_BASE_URL}/tecnicos`);
+    const porId = {};
+    tecnicos.filter(t => set.has(t.id)).forEach(t => { porId[t.id] = construirTecnico(t); });
+    return porId;
   }
 
   const TIPO_OT_LABEL = {
@@ -174,30 +189,39 @@
     return String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0");
   }
 
-  // "Elegible" para el día = por_revisar + por_asignar (sin ruta asignada
-  // por ningún sistema todavía) — así lo define el refinamiento de HU-01.
-  // El mock real expone el ciclo completo de estados (también asignada,
-  // en_terreno, finalizada, etc.), así que se filtra explícitamente en
-  // vez de asumir que /ordenes solo trae elegibles.
-  const ELEGIBLES = ["por_revisar", "por_asignar"];
+  // "Elegible" para el día = solo por_asignar — es el único estado listo
+  // para entrar a una propuesta de ruta (coincide con lo que ya usa el
+  // servicio real de optimización). El mock expone el ciclo completo de
+  // estados (por_revisar, asignacion_por_confirmar, asignada, en_terreno,
+  // finalizada, enviada_cobranza), así que se filtra explícitamente en vez
+  // de asumir que /ordenes solo trae elegibles.
+  const ELEGIBLES = ["por_asignar"];
 
   // El mock no entrega "cliente" en la OT — se usa id + tipo como
   // identificador visible (decisión acordada ante el gap de contrato).
   // Tampoco entrega hora_programada para las elegibles (siempre null)
   // — sin ventana real, se asume disponible toda la jornada (08:00–18:00).
   // Si alguna vez llega con valor, se le da un margen de ±30 min.
+  function construirOt(o) {
+    return {
+      id: o.id,
+      // Sin el id acá: en la UI siempre se muestra junto a un id-pill con
+      // o.id al lado — repetirlo dejaba el texto "OT-0010 · OT-0010 · ..."
+      // y, en columnas angostas, el pill se quedaba sin espacio y cortaba
+      // el texto a la mitad.
+      cliente: TIPO_OT_LABEL[o.tipo] || o.tipo,
+      direccion: o.direccion_instalacion,
+      ventanaInicio: o.hora_programada ? sumarMinutos(o.hora_programada, -30) : "08:00",
+      ventanaFin: o.hora_programada ? sumarMinutos(o.hora_programada, 30) : "18:00",
+      ...latlngPorComuna(comunaDeDireccion(o.direccion_instalacion)),
+    };
+  }
+
   function obtenerOtsDelDia() {
     return fetchJSON(`${API_BASE_URL}/ordenes`).then(ordenes =>
       ordenes
         .filter(o => ELEGIBLES.includes(o.estado))
-        .map(o => ({
-          id: o.id,
-          cliente: `${o.id} · ${TIPO_OT_LABEL[o.tipo] || o.tipo}`,
-          direccion: o.direccion_instalacion,
-          ventanaInicio: o.hora_programada ? sumarMinutos(o.hora_programada, -30) : "08:00",
-          ventanaFin: o.hora_programada ? sumarMinutos(o.hora_programada, 30) : "18:00",
-          ...latlngPorComuna(comunaDeDireccion(o.direccion_instalacion)),
-        }))
+        .map(construirOt)
         // Se muestran ordenadas por ventana de atención (hora de inicio) —
         // el mock no las entrega en ese orden, y la lista se ve "desordenada"
         // si quedan mezcladas distintos horarios.
@@ -205,5 +229,43 @@
     );
   }
 
-  window.RUTAS_EXTERNO_API = { API_BASE_URL, hoyISO, sumarDiasISO, fetchJSON, obtenerTecnicosDisponibles, obtenerOtsDelDia };
+  // El optimizador remoto solo devuelve ids de OT (sin dirección, ventana
+  // ni coordenadas) — se cruzan contra /ordenes para reconstruir el dato
+  // completo que necesita la UI de la propuesta.
+  async function obtenerOtsPorIds(ids) {
+    if (!ids.length) return {};
+    const set = new Set(ids);
+    const ordenes = await fetchJSON(`${API_BASE_URL}/ordenes`);
+    const porId = {};
+    ordenes.filter(o => set.has(o.id)).forEach(o => { porId[o.id] = construirOt(o); });
+    return porId;
+  }
+
+  // Servicio real de optimización (HU-07/08, OR-Tools VRPTW) — calcula la
+  // asignación OT↔técnico a partir de la selección real del panel.
+  //
+  // Contrato (confirmado con el equipo del Optimizador):
+  //   POST { tecnicos: [{id: <entero>, nombre, zona}], ordenes: [{id, direccion_instalacion}] }
+  //   → { estado, total_tecnicos, total_ordenes_procesadas,
+  //       asignaciones: [{tecnico_id: <el mismo entero recibido>, tecnico_nombre, ordenes_asignadas: [otId,...]}] }
+  // El id de técnico es un entero propio de ese servicio, no el id real
+  // (UUID) del mock de técnicos — quien llama es responsable de mapear ida
+  // y vuelta (ver onOptimizar en RutasExterno.jsx).
+  const OPTIMIZADOR_REMOTO_URL = "https://optimizador-demo.onrender.com/api/v1/optimizar";
+  async function optimizarRemoto({ tecnicos, ordenes }) {
+    const res = await fetch(OPTIMIZADOR_REMOTO_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tecnicos, ordenes }),
+    });
+    if (!res.ok) throw new Error(`${OPTIMIZADOR_REMOTO_URL} respondió ${res.status}`);
+    return res.json();
+  }
+
+  window.RUTAS_EXTERNO_API = {
+    API_BASE_URL, hoyISO, sumarDiasISO, fetchJSON,
+    obtenerTecnicosDisponibles, obtenerTecnicosPorIds,
+    obtenerOtsDelDia, obtenerOtsPorIds,
+    optimizarRemoto,
+  };
 })();

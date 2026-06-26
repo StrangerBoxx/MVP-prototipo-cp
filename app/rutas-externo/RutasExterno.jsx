@@ -6,9 +6,16 @@
    (ver onConfirmRoute / onConfirmAssignment en main.jsx); no debe
    implementarse lógica de optimización fuera de esta carpeta.
 
-   Maqueta de HU-01/02/03 (Sprint 1) con datos placeholder — ver
-   app/rutas-externo/data.js. El contrato real de OT/técnico aún
-   no está congelado; cuando exista, solo data.js debería cambiar.
+   Maqueta de HU-01/02/03 (Sprint 1) — técnicos/OTs desde el mock
+   real (Render); la asignación (HU-02) la calcula el servicio real
+   de optimización (OR-Tools VRPTW, optimizador-demo.onrender.com,
+   ver optimizarRemoto() en data.js). Se le manda la selección del
+   panel — POST { tecnicos: [{id: entero, nombre, zona}], ordenes:
+   [{id, direccion_instalacion}] } — el id de técnico es un entero
+   propio de ese servicio, no el UUID real del mock, así que
+   onOptimizar lo mapea por posición y lo traduce de vuelta al leer
+   la respuesta. El contrato real de OT/técnico aún no está
+   congelado; cuando exista, solo data.js debería cambiar.
    ============================================================ */
 
 function RutasExternoNavItem({ active, onClick }) {
@@ -51,13 +58,20 @@ function fechaDDMMYYYY(iso) {
 }
 
 /* ---- Panel de selección (HU-01) ---- */
-function SeleccionPanel({ fecha, onFechaChange, otsDelDia, tecnicosDisponibles, otsSel, tecSel, toggleOt, toggleTec, onOptimizar }) {
+function SeleccionPanel({ fecha, onFechaChange, otsDelDia, tecnicosDisponibles, otsSel, tecSel, toggleOt, toggleTec, onToggleTodosOts, onToggleTodosTec, onOptimizar, optimizando, error }) {
   const otsCount = otsDelDia.filter(o => otsSel[o.id]).length;
   const tecCount = tecnicosDisponibles.filter(t => tecSel[t.id]).length;
   const puedeOptimizar = otsCount > 0 && tecCount > 0;
 
   return (
     <>
+      {error && (
+        <div className="card" style={{ borderColor: "var(--red-fg)", background: "var(--accent-softer)", display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", marginBottom: 16 }}>
+          <Icon name="alert" style={{ width: 18, height: 18, color: "var(--red-fg)", flex: "none" }} />
+          <span>{error}</span>
+        </div>
+      )}
+
       <div className="card" style={{ marginBottom: 16, padding: "12px 16px", display: "flex", alignItems: "center", gap: 10 }}>
         <Icon name="clock" style={{ width: 16, height: 16, color: "var(--text-3)", flex: "none" }} />
         <span className="cell-strong" style={{ flex: "none" }}>Planificar para el día</span>
@@ -71,7 +85,14 @@ function SeleccionPanel({ fecha, onFechaChange, otsDelDia, tecnicosDisponibles, 
         <div className="card card-pad">
           <div className="rx-card-head">
             <div className="rx-card-title">OTs por Asignar</div>
-            <span className="rx-card-count">{otsCount} / {otsDelDia.length} seleccionadas</span>
+            <div className="row-flex" style={{ gap: 10 }}>
+              {otsDelDia.length > 0 && (
+                <button className="btn btn-sm" onClick={() => onToggleTodosOts(otsCount < otsDelDia.length)}>
+                  {otsCount < otsDelDia.length ? "Seleccionar todo" : "Deseleccionar todo"}
+                </button>
+              )}
+              <span className="rx-card-count">{otsCount} / {otsDelDia.length} seleccionadas</span>
+            </div>
           </div>
           {otsDelDia.length === 0 ? (
             <div className="card empty"><Icon name="orders" />No hay OTs elegibles por asignar.</div>
@@ -97,7 +118,14 @@ function SeleccionPanel({ fecha, onFechaChange, otsDelDia, tecnicosDisponibles, 
         <div className="card card-pad">
           <div className="rx-card-head">
             <div className="rx-card-title">Técnicos Disponibles {fechaDDMMYYYY(fecha)}</div>
-            <span className="rx-card-count">{tecCount} / {tecnicosDisponibles.length} seleccionados</span>
+            <div className="row-flex" style={{ gap: 10 }}>
+              {tecnicosDisponibles.length > 0 && (
+                <button className="btn btn-sm" onClick={() => onToggleTodosTec(tecCount < tecnicosDisponibles.length)}>
+                  {tecCount < tecnicosDisponibles.length ? "Seleccionar todo" : "Deseleccionar todo"}
+                </button>
+              )}
+              <span className="rx-card-count">{tecCount} / {tecnicosDisponibles.length} seleccionados</span>
+            </div>
           </div>
           {tecnicosDisponibles.length === 0 ? (
             <div className="card empty"><Icon name="techs" />No hay técnicos disponibles para el día elegido.</div>
@@ -120,10 +148,12 @@ function SeleccionPanel({ fecha, onFechaChange, otsDelDia, tecnicosDisponibles, 
       </div>
 
       <div className="rx-actions">
-        <button className="btn btn-primary" disabled={!puedeOptimizar} onClick={onOptimizar}>
-          <Icon name="zap" />Optimizar planificación
+        <button className="btn btn-primary" disabled={optimizando || !puedeOptimizar} onClick={onOptimizar}>
+          <Icon name={optimizando ? "refresh" : "zap"} />{optimizando ? "Optimizando…" : "Optimizar planificación"}
         </button>
-        {!puedeOptimizar && <span className="cell-muted" style={{ fontSize: 12.5 }}>Selecciona al menos una OT y un técnico.</span>}
+        <span className="cell-muted" style={{ fontSize: 12.5 }}>
+          {puedeOptimizar ? "El cálculo lo hace el servicio real de optimización (OR-Tools), con la selección de aquí." : "Selecciona al menos una OT y un técnico."}
+        </span>
       </div>
     </>
   );
@@ -187,8 +217,9 @@ function RouteEditCard({ tecnico, paradas, otrosTecnicos, onMoveUp, onMoveDown, 
                 </div>
                 <div className="stop-dir"><Icon name="pin" style={{ width: 12, height: 12 }} />{ot.direccion}</div>
               </div>
-              <span className={"badge " + (llegadas[i].factible ? "b-slate" : "b-amber")} style={{ flex: "none" }} title="Hora de llegada estimada según el orden de la ruta">
-                <Icon name="clock" />{window.RUTAS_EXTERNO_OPTIMIZER.minAHhmm(llegadas[i].llegada)}
+              <span className={"badge " + (llegadas[i].factible ? "b-slate" : "b-amber")} style={{ flex: "none" }}
+                title={llegadas[i].factible ? "Hora programada de la OT" : "Hora programada de la OT — con el orden actual de la ruta, el técnico llegaría fuera de esta ventana"}>
+                <Icon name="clock" />{ot.ventanaInicio}–{ot.ventanaFin}
               </span>
               <div className="rx-stop-actions">
                 <button className="btn btn-sm" disabled={i === 0} onClick={() => onMoveUp(tecnico.id, ot.id)} title="Subir"><Icon name="chevD" style={{ transform: "rotate(180deg)" }} /></button>
@@ -241,26 +272,58 @@ function PendienteRow({ ot, tecnicos, onMover }) {
 /* ---- Panel de propuesta + edición + confirmación (HU-02/HU-03) ---- */
 function PropuestaPanel({ propuesta, error, onMoveUp, onMoveDown, onMover, onEliminar, onMoverPendiente, onVolver, onConfirmar }) {
   const tecIds = Object.keys(propuesta.porTecnico);
+  // Validación en vivo (no bloquea) — se recalcula con cada cambio de la
+  // propuesta para avisar de paradas fuera de ventana mientras se edita,
+  // no solo al hacer clic en "Confirmar plan".
+  const { fueraDeVentana } = window.RUTAS_EXTERNO_OPTIMIZER.validarConfirmacion(propuesta.porTecnico);
   return (
     <>
       {error && (
         <div className="card" style={{ borderColor: "var(--red-fg)", background: "var(--accent-softer)", display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", marginBottom: 16 }}>
-          <Icon name="alert" style={{ color: "var(--red-fg)" }} />
+          <Icon name="alert" style={{ width: 18, height: 18, color: "var(--red-fg)", flex: "none" }} />
           <span>{error}</span>
         </div>
       )}
 
-      <div className="routes-grid">
-        {tecIds.map(tid => {
-          const { tecnico, paradas } = propuesta.porTecnico[tid];
-          // solo técnicos que sí entraron a esta propuesta (no todos los disponibles)
-          const otros = tecIds.filter(id => id !== tid).map(id => propuesta.porTecnico[id].tecnico);
-          return (
-            <RouteEditCard key={tid} tecnico={tecnico} paradas={paradas} otrosTecnicos={otros}
-              onMoveUp={onMoveUp} onMoveDown={onMoveDown} onMover={onMover} onEliminar={onEliminar} />
-          );
-        })}
-      </div>
+      {fueraDeVentana.length > 0 && (
+        <div className="card" style={{ borderColor: "var(--amber-dot)", background: "var(--amber-bg)", color: "var(--amber-fg)", display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 16px", marginBottom: 16 }}>
+          <Icon name="alert" style={{ width: 18, height: 18, color: "var(--amber-dot)", flex: "none", marginTop: 2 }} />
+          <div>
+            <b>{fueraDeVentana.length} parada{fueraDeVentana.length === 1 ? "" : "s"} fuera de su ventana programada</b> con el orden actual de la ruta. Puedes confirmar igual, o ajustar el orden/asignación antes.
+          </div>
+        </div>
+      )}
+
+      {tecIds.every(tid => propuesta.porTecnico[tid].paradas.length === 0) ? (
+        <div className="card empty"><Icon name="checkC" />Ningún técnico tiene OTs asignadas todavía.</div>
+      ) : (
+        <div className="routes-grid">
+          {tecIds
+            .filter(tid => propuesta.porTecnico[tid].paradas.length > 0)
+            // En el mosaico, las rutas se ordenan por la hora de su primera
+            // parada (no por el orden en que las devolvió el optimizador) —
+            // así el técnico que arranca más temprano queda primero.
+            .sort((a, b) => {
+              const { tecnico: tA, paradas: pA } = propuesta.porTecnico[a];
+              const { tecnico: tB, paradas: pB } = propuesta.porTecnico[b];
+              const llegadaA = window.RUTAS_EXTERNO_OPTIMIZER.calcularLlegadas(tA, pA)[0].llegada;
+              const llegadaB = window.RUTAS_EXTERNO_OPTIMIZER.calcularLlegadas(tB, pB)[0].llegada;
+              return llegadaA - llegadaB;
+            })
+            .map(tid => {
+            const { tecnico, paradas } = propuesta.porTecnico[tid];
+            // Para "Mover" se ofrecen TODOS los técnicos de la propuesta (no
+            // solo los que ya tienen tarjeta visible) — así una OT sí se
+            // puede mandar a un técnico que hoy está vacío y por eso no
+            // muestra tarjeta.
+            const otros = tecIds.filter(id => id !== tid).map(id => propuesta.porTecnico[id].tecnico);
+            return (
+              <RouteEditCard key={tid} tecnico={tecnico} paradas={paradas} otrosTecnicos={otros}
+                onMoveUp={onMoveUp} onMoveDown={onMoveDown} onMover={onMover} onEliminar={onEliminar} />
+            );
+          })}
+        </div>
+      )}
 
       <div className="card card-pad" style={{ marginTop: 16 }}>
         <div className="rx-card-head">
@@ -316,7 +379,7 @@ function ConfirmadoBanner({ confirmado, onEditar }) {
 }
 
 /* ---- Pantalla raíz: orquesta selección → propuesta → confirmación ---- */
-function RutasExternoScreen() {
+function RutasExternoScreen({ onToast }) {
   // Día que se está planificando — el mock genera disponibilidad para los
   // próximos 14 días, así que no tiene que ser forzosamente "hoy". Se
   // persiste para no perderlo si solo cambiaste de pantalla.
@@ -345,6 +408,7 @@ function RutasExternoScreen() {
   // sin importar qué día esté elegido en el selector de planificación.
   const [confirmados, setConfirmados] = useState(() => rxLoad(RX_KEYS.confirmados, {}));
   const [error, setError] = useState(null);
+  const [optimizando, setOptimizando] = useState(false);
 
   // Las OT que ya quedaron en algún plan confirmado (de cualquier día) no se
   // vuelven a ofrecer como elegibles (el write-back al mock sigue diferido
@@ -404,6 +468,8 @@ function RutasExternoScreen() {
 
   const toggleOt = id => setOtsSel(prev => ({ ...prev, [id]: !prev[id] }));
   const toggleTec = id => setTecSel(prev => ({ ...prev, [id]: !prev[id] }));
+  const setTodosOts = valor => setOtsSel(Object.fromEntries(otsDelDia.map(o => [o.id, valor])));
+  const setTodosTec = valor => setTecSel(Object.fromEntries(tecnicosDisponibles.map(t => [t.id, valor])));
   // Reabre el plan confirmado de ese día en el panel de edición (mismas
   // acciones de HU-03: reordenar/mover/eliminar). Si se vuelve a confirmar,
   // reemplaza por completo la confirmación anterior de ese día; si se
@@ -418,12 +484,57 @@ function RutasExternoScreen() {
     setEtapa("propuesta");
   };
 
-  const onOptimizar = () => {
-    const ots = otsDelDia.filter(o => otsSel[o.id]);
-    const tecnicos = tecnicosDisponibles.filter(t => tecSel[t.id]);
-    setPropuesta(window.RUTAS_EXTERNO_OPTIMIZER.proponerAsignacion(ots, tecnicos));
+  // La asignación (HU-02) la resuelve el servicio real de optimización
+  // (OR-Tools VRPTW), mandándole la selección vigente del panel. Su
+  // contrato pide el id de técnico como ENTERO propio de ese servicio, no
+  // el UUID real del mock — se mapea por posición al armar el payload y se
+  // traduce de vuelta al leer la respuesta (idRealPorIndice).
+  const onOptimizar = async () => {
+    const tecnicosSeleccionados = tecnicosDisponibles.filter(t => tecSel[t.id]);
+    const otsSeleccionadas = otsDelDia.filter(o => otsSel[o.id]);
+    if (!tecnicosSeleccionados.length || !otsSeleccionadas.length) {
+      setError("Selecciona al menos una OT y un técnico para optimizar.");
+      return;
+    }
+
+    setOptimizando(true);
     setError(null);
-    setEtapa("propuesta");
+    try {
+      const idRealPorIndice = tecnicosSeleccionados.map(t => t.id);
+      const tecnicosPayload = tecnicosSeleccionados.map((t, i) => ({ id: i + 1, nombre: t.nombre, zona: t.zona }));
+      const ordenesPayload = otsSeleccionadas.map(o => ({ id: o.id, direccion_instalacion: o.direccion }));
+
+      const resultado = await window.RUTAS_EXTERNO_API.optimizarRemoto({ tecnicos: tecnicosPayload, ordenes: ordenesPayload });
+      const asignaciones = resultado.asignaciones || [];
+      const otIds = asignaciones.flatMap(a => a.ordenes_asignadas);
+      const tecIdsReales = asignaciones.map(a => idRealPorIndice[a.tecnico_id - 1]).filter(Boolean);
+      const [otsPorId, tecPorId] = await Promise.all([
+        window.RUTAS_EXTERNO_API.obtenerOtsPorIds(otIds),
+        window.RUTAS_EXTERNO_API.obtenerTecnicosPorIds(tecIdsReales),
+      ]);
+
+      const porTecnico = {};
+      asignaciones.forEach(a => {
+        const tecnicoIdReal = idRealPorIndice[a.tecnico_id - 1];
+        if (!tecnicoIdReal) return; // id fuera del rango que mandamos — no debería pasar
+        porTecnico[tecnicoIdReal] = {
+          tecnico: tecPorId[tecnicoIdReal] || { id: tecnicoIdReal, nombre: a.tecnico_nombre, zona: "—", tipo: "externo", color: "#7a8794", lat: -33.4489, lng: -70.6693 },
+          paradas: a.ordenes_asignadas.map(id => otsPorId[id]).filter(Boolean),
+        };
+      });
+
+      // Pendientes: de las OTs que se seleccionaron en el panel, las que el
+      // optimizador remoto no dejó asignadas a ningún técnico.
+      const asignadasSet = new Set(otIds);
+      const pendientes = otsDelDia.filter(o => otsSel[o.id] && !asignadasSet.has(o.id));
+
+      setPropuesta({ porTecnico, pendientes });
+      setEtapa("propuesta");
+    } catch (err) {
+      setError(`No se pudo optimizar: ${err.message}`);
+    } finally {
+      setOptimizando(false);
+    }
   };
 
   const updatePropuesta = fn => setPropuesta(prev => fn(deepClone(prev)));
@@ -465,11 +576,14 @@ function RutasExternoScreen() {
 
   const onConfirmar = () => {
     const r = window.RUTAS_EXTERNO_OPTIMIZER.validarConfirmacion(propuesta.porTecnico);
-    if (!r.ok) { setError(r.razon); return; }
+    if (!r.ok) { setError(r.duplicado); return; } // integridad de datos — esto sí bloquea
     setConfirmados(prev => ({ ...prev, [fecha]: { porTecnico: propuesta.porTecnico, fecha } }));
     setPropuesta(null);
     setError(null);
     setEtapa("seleccion");
+    onToast?.(r.fueraDeVentana.length
+      ? `Plan confirmado · ${r.fueraDeVentana.length} parada${r.fueraDeVentana.length === 1 ? "" : "s"} fuera de ventana programada`
+      : "Plan de rutas confirmado");
   };
 
   return (
@@ -493,7 +607,9 @@ function RutasExternoScreen() {
         <div className="card empty"><Icon name="alert" />No se pudo cargar el mock: {errorCarga}</div>
       ) : etapa === "seleccion" ? (
         <SeleccionPanel fecha={fecha} onFechaChange={setFecha} otsDelDia={otsDelDia} tecnicosDisponibles={tecnicosDisponibles}
-          otsSel={otsSel} tecSel={tecSel} toggleOt={toggleOt} toggleTec={toggleTec} onOptimizar={onOptimizar} />
+          otsSel={otsSel} tecSel={tecSel} toggleOt={toggleOt} toggleTec={toggleTec}
+          onToggleTodosOts={setTodosOts} onToggleTodosTec={setTodosTec} onOptimizar={onOptimizar}
+          optimizando={optimizando} error={error} />
       ) : (
         <PropuestaPanel propuesta={propuesta} error={error}
           onMoveUp={onMoveUp} onMoveDown={onMoveDown} onMover={onMover} onEliminar={onEliminar}
