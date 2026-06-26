@@ -7,8 +7,26 @@
 (function () {
   const API_BASE_URL = "https://api-dummy-yurf.onrender.com/api";
 
+  // toISOString() convierte a UTC, lo que adelanta la fecha un día en
+  // horario de tarde/noche en Chile (UTC-3/-4) — se arma el ISO a mano
+  // con las partes de la fecha LOCAL para que "hoy" siempre sea hoy.
+  function fechaLocalISO(d) {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }
   function hoyISO() {
-    return new Date().toISOString().slice(0, 10);
+    return fechaLocalISO(new Date());
+  }
+
+  // El mock genera disponibilidad solo para "hoy" (del servidor) + 13 días
+  // hacia adelante (ver generar_disponibilidades en Optimizador/main.py) —
+  // se usa para acotar el selector de fecha de planificación.
+  function sumarDiasISO(dias) {
+    const d = new Date();
+    d.setDate(d.getDate() + dias);
+    return fechaLocalISO(d);
   }
 
   async function fetchJSON(url) {
@@ -18,13 +36,19 @@
   }
 
   // El mock no entrega lat/lng en ningún lado (ni técnico ni OT), solo
-  // nombres de comuna (zona del técnico; comuna parseada de la dirección
-  // de la OT). Sin geocodificación real (fuera de alcance, igual que en
-  // el resto del Sprint 1), se aproxima con el centroide de cada comuna
-  // — decisión acordada para que el optimizador pueda calcular distancia
-  // real entre zonas en vez de NaN.
+  // nombres de ciudad/comuna (zona del técnico; ciudad parseada de la
+  // dirección de la OT). Sin geocodificación real (fuera de alcance, igual
+  // que en el resto del Sprint 1), se aproxima con el centroide de cada
+  // ciudad/comuna — decisión acordada para que el optimizador pueda
+  // calcular distancia real entre zonas en vez de NaN.
+  //
+  // El mock genera direcciones de TODO Chile (no solo Santiago) — ver las
+  // ciudades reales que devuelve /ordenes y /tecnicos en producción — así
+  // que el diccionario cubre el país completo, no solo comunas de la RM.
   const LATLNG_POR_COMUNA = {
+    // Región Metropolitana (comunas)
     "Santiago Centro": { lat: -33.4489, lng: -70.6693 },
+    "Santiago": { lat: -33.4489, lng: -70.6693 },
     "Providencia": { lat: -33.4314, lng: -70.6093 },
     "Las Condes": { lat: -33.4089, lng: -70.5693 },
     "Vitacura": { lat: -33.3815, lng: -70.5683 },
@@ -44,6 +68,47 @@
     "Lo Barnechea": { lat: -33.3500, lng: -70.5167 },
     "Cerrillos": { lat: -33.4953, lng: -70.7158 },
     "Estacion Central": { lat: -33.4597, lng: -70.6794 },
+    // Norte
+    "Arica": { lat: -18.4783, lng: -70.3126 },
+    "Alto Hospicio": { lat: -20.2698, lng: -70.1006 },
+    "Iquique": { lat: -20.2208, lng: -70.1431 },
+    "Antofagasta": { lat: -23.6509, lng: -70.3975 },
+    "Calama": { lat: -22.4524, lng: -68.9217 },
+    "Copiapó": { lat: -27.3668, lng: -70.3322 },
+    "La Serena": { lat: -29.9027, lng: -71.2519 },
+    "Coquimbo": { lat: -29.9533, lng: -71.3436 },
+    "Ovalle": { lat: -30.6006, lng: -71.2003 },
+    // Centro / Valparaíso / O'Higgins / Maule
+    "Valparaíso": { lat: -33.0472, lng: -71.6127 },
+    "Viña del Mar": { lat: -33.0245, lng: -71.5518 },
+    "Quilpué": { lat: -33.0472, lng: -71.4419 },
+    "Quillota": { lat: -32.8814, lng: -71.2493 },
+    "San Antonio": { lat: -33.5933, lng: -71.6208 },
+    "Pichilemu": { lat: -34.3833, lng: -72.0000 },
+    "Rancagua": { lat: -34.1708, lng: -70.7444 },
+    "San Fernando": { lat: -34.5856, lng: -70.9858 },
+    "Santa Cruz": { lat: -34.6388, lng: -71.3647 },
+    "Talca": { lat: -35.4264, lng: -71.6554 },
+    "Curicó": { lat: -34.9828, lng: -71.2389 },
+    "Linares": { lat: -35.8458, lng: -71.5990 },
+    // Biobío / Araucanía
+    "Chillán": { lat: -36.6066, lng: -72.1034 },
+    "San Carlos": { lat: -36.4250, lng: -71.9583 },
+    "Concepción": { lat: -36.8270, lng: -73.0503 },
+    "Talcahuano": { lat: -36.7249, lng: -73.1166 },
+    "Los Ángeles": { lat: -37.4697, lng: -72.3531 },
+    "Angol": { lat: -37.7964, lng: -72.7158 },
+    "Temuco": { lat: -38.7359, lng: -72.5904 },
+    "Pucón": { lat: -39.2823, lng: -71.9759 },
+    // Sur / Los Lagos / Aysén / Magallanes
+    "Valdivia": { lat: -39.8142, lng: -73.2459 },
+    "La Unión": { lat: -40.2934, lng: -73.0786 },
+    "Osorno": { lat: -40.5736, lng: -73.1335 },
+    "Puerto Montt": { lat: -41.4693, lng: -72.9424 },
+    "Castro": { lat: -42.4827, lng: -73.7643 },
+    "Coyhaique": { lat: -45.5712, lng: -72.0686 },
+    "Puerto Natales": { lat: -51.7236, lng: -72.4875 },
+    "Punta Arenas": { lat: -53.1638, lng: -70.9171 },
   };
   const LATLNG_DEFAULT = LATLNG_POR_COMUNA["Santiago Centro"];
 
@@ -51,10 +116,25 @@
     return LATLNG_POR_COMUNA[nombreComuna] || LATLNG_DEFAULT;
   }
 
-  // La dirección del mock siempre termina en "..., <comuna>, Santiago".
+  // La dirección del mock viene como "<calle> #<número>, <ciudad/comuna>"
+  // — un solo separador, sin sufijo ", Santiago" (eso era un supuesto
+  // del placeholder original que ya no calza con el mock real). La
+  // ciudad/comuna es siempre el último segmento, sin importar cuántas
+  // comas tenga la calle.
   function comunaDeDireccion(direccion) {
     const partes = direccion.split(",").map(p => p.trim()).filter(Boolean);
-    return partes.length >= 2 ? partes[partes.length - 2] : null;
+    return partes.length >= 1 ? partes[partes.length - 1] : null;
+  }
+
+  // Misma paleta usada para técnicos/usuarios en el resto del backoffice
+  // (ver CP_DATA.technicians en app/data.js) — el mock externo no entrega
+  // color, así que se asigna por id para que la foto de perfil se vea
+  // igual que en el resto de las pantallas.
+  const AVATAR_PALETTE = ["#033E84", "#0f766e", "#b45309", "#7c3aed", "#be185d", "#0369a1"];
+  function colorPorId(id) {
+    let hash = 0;
+    for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
+    return AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length];
   }
 
   /* Técnicos disponibles del día: cruza /tecnicos con /disponibilidad?fecha=hoy.
@@ -74,6 +154,7 @@
         nombre: `${t.nombre} ${t.apellidos}`,
         zona: t.zona,
         tipo: t.tipo,
+        color: colorPorId(String(t.id)),
         ...latlngPorComuna(t.zona),
       }));
   }
@@ -117,8 +198,12 @@
           ventanaFin: o.hora_programada ? sumarMinutos(o.hora_programada, 30) : "18:00",
           ...latlngPorComuna(comunaDeDireccion(o.direccion_instalacion)),
         }))
+        // Se muestran ordenadas por ventana de atención (hora de inicio) —
+        // el mock no las entrega en ese orden, y la lista se ve "desordenada"
+        // si quedan mezcladas distintos horarios.
+        .sort((a, b) => a.ventanaInicio.localeCompare(b.ventanaInicio))
     );
   }
 
-  window.RUTAS_EXTERNO_API = { API_BASE_URL, hoyISO, fetchJSON, obtenerTecnicosDisponibles, obtenerOtsDelDia };
+  window.RUTAS_EXTERNO_API = { API_BASE_URL, hoyISO, sumarDiasISO, fetchJSON, obtenerTecnicosDisponibles, obtenerOtsDelDia };
 })();

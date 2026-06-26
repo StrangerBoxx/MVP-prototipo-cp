@@ -28,10 +28,11 @@ function RutasExternoNavItem({ active, onClick }) {
 
 /* ---- sessionStorage: selección, propuesta y confirmación del día ---- */
 const RX_KEYS = {
+  fecha: "rutasExterno.fecha",
   otsSel: "rutasExterno.otsSel",
   tecSel: "rutasExterno.tecSel",
   propuesta: "rutasExterno.propuesta",
-  confirmado: "rutasExterno.confirmado",
+  confirmados: "rutasExterno.confirmados",
 };
 function rxLoad(key, fallback) {
   try {
@@ -43,22 +44,37 @@ function rxSave(key, value) {
   try { sessionStorage.setItem(key, JSON.stringify(value)); } catch {}
 }
 
+// Solo para mostrar al usuario — el input date y el resto del estado siguen en ISO (YYYY-MM-DD).
+function fechaDDMMYYYY(iso) {
+  const [y, m, d] = iso.split("-");
+  return `${d}-${m}-${y}`;
+}
+
 /* ---- Panel de selección (HU-01) ---- */
-function SeleccionPanel({ otsDelDia, tecnicosDisponibles, otsSel, tecSel, toggleOt, toggleTec, onOptimizar }) {
+function SeleccionPanel({ fecha, onFechaChange, otsDelDia, tecnicosDisponibles, otsSel, tecSel, toggleOt, toggleTec, onOptimizar }) {
   const otsCount = otsDelDia.filter(o => otsSel[o.id]).length;
   const tecCount = tecnicosDisponibles.filter(t => tecSel[t.id]).length;
   const puedeOptimizar = otsCount > 0 && tecCount > 0;
 
   return (
     <>
+      <div className="card" style={{ marginBottom: 16, padding: "12px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+        <Icon name="clock" style={{ width: 16, height: 16, color: "var(--text-3)", flex: "none" }} />
+        <span className="cell-strong" style={{ flex: "none" }}>Planificar para el día</span>
+        <input type="date" className="field-input" style={{ width: 160, flex: "none" }} value={fecha}
+          min={window.RUTAS_EXTERNO_API.hoyISO()} max={window.RUTAS_EXTERNO_API.sumarDiasISO(13)}
+          onChange={e => e.target.value && onFechaChange(e.target.value)} />
+        <span className="cell-muted" style={{ fontSize: 12.5 }}>La disponibilidad de los técnicos se carga según el día elegido.</span>
+      </div>
+
       <div className="rx-grid">
-        <div className="card">
+        <div className="card card-pad">
           <div className="rx-card-head">
-            <div className="rx-card-title">OTs elegibles del día</div>
+            <div className="rx-card-title">OTs por Asignar</div>
             <span className="rx-card-count">{otsCount} / {otsDelDia.length} seleccionadas</span>
           </div>
           {otsDelDia.length === 0 ? (
-            <div className="card empty"><Icon name="orders" />No hay OTs elegibles para hoy.</div>
+            <div className="card empty"><Icon name="orders" />No hay OTs elegibles por asignar.</div>
           ) : (
             <div className="rx-check-list">
               {otsDelDia.map(ot => (
@@ -78,13 +94,13 @@ function SeleccionPanel({ otsDelDia, tecnicosDisponibles, otsSel, tecSel, toggle
           )}
         </div>
 
-        <div className="card">
+        <div className="card card-pad">
           <div className="rx-card-head">
-            <div className="rx-card-title">Técnicos disponibles hoy</div>
+            <div className="rx-card-title">Técnicos Disponibles {fechaDDMMYYYY(fecha)}</div>
             <span className="rx-card-count">{tecCount} / {tecnicosDisponibles.length} seleccionados</span>
           </div>
           {tecnicosDisponibles.length === 0 ? (
-            <div className="card empty"><Icon name="techs" />No hay técnicos disponibles para hoy.</div>
+            <div className="card empty"><Icon name="techs" />No hay técnicos disponibles para el día elegido.</div>
           ) : (
             <div className="rx-check-list">
               {tecnicosDisponibles.map(t => (
@@ -139,6 +155,10 @@ function RxMoveMenu({ otros, onMove, onClose }) {
 /* ---- Tarjeta de ruta editable por técnico (HU-03) ---- */
 function RouteEditCard({ tecnico, paradas, otrosTecnicos, onMoveUp, onMoveDown, onMover, onEliminar }) {
   const [menuFor, setMenuFor] = useState(null);
+  // Hora de llegada estimada a cada parada, recalculada según el orden
+  // actual de la ruta — no la ventana genérica de la OT (siempre 08:00–18:00
+  // para las elegibles), que no decía nada sobre el orden real de visita.
+  const llegadas = window.RUTAS_EXTERNO_OPTIMIZER.calcularLlegadas(tecnico, paradas);
   return (
     <div className={"route-card" + (menuFor ? " menu-open" : "")}>
       <div className="route-head">
@@ -154,7 +174,7 @@ function RouteEditCard({ tecnico, paradas, otrosTecnicos, onMoveUp, onMoveDown, 
       </div>
 
       {paradas.length === 0 ? (
-        <div className="card empty"><Icon name="checkC" />Sin paradas asignadas.</div>
+        <div className="card empty"><Icon name="checkC" />Sin OTs asignadas.</div>
       ) : (
         <div className="route-stops">
           {paradas.map((ot, i) => (
@@ -167,7 +187,9 @@ function RouteEditCard({ tecnico, paradas, otrosTecnicos, onMoveUp, onMoveDown, 
                 </div>
                 <div className="stop-dir"><Icon name="pin" style={{ width: 12, height: 12 }} />{ot.direccion}</div>
               </div>
-              <span className="badge b-slate" style={{ flex: "none" }}><Icon name="clock" />{ot.ventanaInicio}–{ot.ventanaFin}</span>
+              <span className={"badge " + (llegadas[i].factible ? "b-slate" : "b-amber")} style={{ flex: "none" }} title="Hora de llegada estimada según el orden de la ruta">
+                <Icon name="clock" />{window.RUTAS_EXTERNO_OPTIMIZER.minAHhmm(llegadas[i].llegada)}
+              </span>
               <div className="rx-stop-actions">
                 <button className="btn btn-sm" disabled={i === 0} onClick={() => onMoveUp(tecnico.id, ot.id)} title="Subir"><Icon name="chevD" style={{ transform: "rotate(180deg)" }} /></button>
                 <button className="btn btn-sm" disabled={i === paradas.length - 1} onClick={() => onMoveDown(tecnico.id, ot.id)} title="Bajar"><Icon name="chevD" /></button>
@@ -190,8 +212,34 @@ function RouteEditCard({ tecnico, paradas, otrosTecnicos, onMoveUp, onMoveDown, 
   );
 }
 
+/* ---- Fila de OT pendiente/no asignable, con botón "Mover" a un técnico ---- */
+function PendienteRow({ ot, tecnicos, onMover }) {
+  const [menuAbierto, setMenuAbierto] = useState(false);
+  return (
+    <div className="rx-check-row">
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="row-flex" style={{ gap: 7 }}>
+          <span className="id-pill">{ot.id}</span>
+          <span className="cell-strong">{ot.cliente}</span>
+        </div>
+        <div className="stop-dir"><Icon name="pin" style={{ width: 12, height: 12 }} />{ot.direccion}</div>
+      </div>
+      <Badge cls="b-amber" icon="alert">Pendiente</Badge>
+      <div style={{ position: "relative" }}>
+        <button className="btn btn-sm" disabled={tecnicos.length === 0}
+          title={tecnicos.length === 0 ? "No hay técnicos en esta propuesta para asignarla" : "Mover a un técnico"}
+          onClick={(ev) => { ev.stopPropagation(); setMenuAbierto(v => !v); }}><Icon name="techs" />Mover</button>
+        {menuAbierto && (
+          <RxMoveMenu otros={tecnicos} onClose={() => setMenuAbierto(false)}
+            onMove={(toId) => { setMenuAbierto(false); onMover(ot.id, toId); }} />
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ---- Panel de propuesta + edición + confirmación (HU-02/HU-03) ---- */
-function PropuestaPanel({ propuesta, error, onMoveUp, onMoveDown, onMover, onEliminar, onVolver, onConfirmar }) {
+function PropuestaPanel({ propuesta, error, onMoveUp, onMoveDown, onMover, onEliminar, onMoverPendiente, onVolver, onConfirmar }) {
   const tecIds = Object.keys(propuesta.porTecnico);
   return (
     <>
@@ -214,9 +262,9 @@ function PropuestaPanel({ propuesta, error, onMoveUp, onMoveDown, onMover, onEli
         })}
       </div>
 
-      <div className="card" style={{ marginTop: 16 }}>
+      <div className="card card-pad" style={{ marginTop: 16 }}>
         <div className="rx-card-head">
-          <div className="rx-card-title">Pendientes / no asignables</div>
+          <div className="rx-card-title">Pendientes</div>
           <span className="rx-card-count">{propuesta.pendientes.length}</span>
         </div>
         {propuesta.pendientes.length === 0 ? (
@@ -224,16 +272,9 @@ function PropuestaPanel({ propuesta, error, onMoveUp, onMoveDown, onMover, onEli
         ) : (
           <div className="rx-check-list">
             {propuesta.pendientes.map(ot => (
-              <div key={ot.id} className="rx-check-row">
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="row-flex" style={{ gap: 7 }}>
-                    <span className="id-pill">{ot.id}</span>
-                    <span className="cell-strong">{ot.cliente}</span>
-                  </div>
-                  <div className="stop-dir"><Icon name="pin" style={{ width: 12, height: 12 }} />{ot.direccion}</div>
-                </div>
-                <Badge cls="b-amber" icon="alert">Pendiente</Badge>
-              </div>
+              <PendienteRow key={ot.id} ot={ot}
+                tecnicos={tecIds.map(id => propuesta.porTecnico[id].tecnico)}
+                onMover={onMoverPendiente} />
             ))}
           </div>
         )}
@@ -248,17 +289,16 @@ function PropuestaPanel({ propuesta, error, onMoveUp, onMoveDown, onMover, onEli
 }
 
 /* ---- Bloque read-only de rutas ya confirmadas hoy ---- */
-function ConfirmadoBanner({ confirmado, onEditar, onEliminar }) {
+function ConfirmadoBanner({ confirmado, onEditar }) {
   const tecIds = Object.keys(confirmado.porTecnico);
   return (
     <div className="route-banner" style={{ flexDirection: "column", alignItems: "stretch", gap: 10 }}>
       <div className="row-flex" style={{ gap: 8 }}>
         <Icon name="checkC" />
-        <b>Rutas confirmadas de hoy</b>
-        <span className="cell-muted">· {confirmado.fecha}</span>
+        <b>Rutas confirmadas</b>
+        <span className="cell-muted">· {fechaDDMMYYYY(confirmado.fecha)}</span>
         <div className="spacer" />
         <button className="btn btn-sm" onClick={onEditar}>Editar</button>
-        <button className="btn btn-sm" onClick={onEliminar}><Icon name="x" />Eliminar rutas confirmadas</button>
       </div>
       <div className="row-flex" style={{ gap: 18, flexWrap: "wrap" }}>
         {tecIds.map(tid => {
@@ -277,6 +317,11 @@ function ConfirmadoBanner({ confirmado, onEditar, onEliminar }) {
 
 /* ---- Pantalla raíz: orquesta selección → propuesta → confirmación ---- */
 function RutasExternoScreen() {
+  // Día que se está planificando — el mock genera disponibilidad para los
+  // próximos 14 días, así que no tiene que ser forzosamente "hoy". Se
+  // persiste para no perderlo si solo cambiaste de pantalla.
+  const [fecha, setFecha] = useState(() => rxLoad(RX_KEYS.fecha, null) || window.RUTAS_EXTERNO_API.hoyISO());
+
   // HU-01: técnicos disponibles y OT elegibles del día, ambos desde el mock real (Render).
   const [tecnicosDisponibles, setTecnicosDisponibles] = useState([]);
   const [otsDelDiaCrudo, setOtsDelDiaCrudo] = useState([]);
@@ -295,20 +340,22 @@ function RutasExternoScreen() {
   // sí persisten, así no se pierde el trabajo si solo cambiaste de pantalla.
   const [etapa, setEtapa] = useState("seleccion");
   const [propuesta, setPropuesta] = useState(() => rxLoad(RX_KEYS.propuesta, null));
-  const [confirmado, setConfirmado] = useState(() => rxLoad(RX_KEYS.confirmado, null));
+  // Mapa fecha (ISO) -> plan confirmado de ese día. Cada día se confirma y
+  // se edita por separado; todos los planes confirmados se muestran a la vez,
+  // sin importar qué día esté elegido en el selector de planificación.
+  const [confirmados, setConfirmados] = useState(() => rxLoad(RX_KEYS.confirmados, {}));
   const [error, setError] = useState(null);
 
-  // Las OT que ya quedaron en un plan confirmado no se vuelven a ofrecer como
-  // elegibles (el write-back al mock sigue diferido — esto es un filtro local
-  // para no proponer dos veces lo mismo). "Eliminar rutas confirmadas" las
-  // devuelve al pool de elegibles.
+  // Las OT que ya quedaron en algún plan confirmado (de cualquier día) no se
+  // vuelven a ofrecer como elegibles (el write-back al mock sigue diferido
+  // — esto es un filtro local para no proponer dos veces lo mismo).
   const otsConfirmadasIds = useMemo(() => {
     const ids = new Set();
-    if (confirmado) {
-      Object.values(confirmado.porTecnico).forEach(({ paradas }) => paradas.forEach(o => ids.add(o.id)));
-    }
+    Object.values(confirmados).forEach(c => {
+      Object.values(c.porTecnico).forEach(({ paradas }) => paradas.forEach(o => ids.add(o.id)));
+    });
     return ids;
-  }, [confirmado]);
+  }, [confirmados]);
   const otsDelDia = useMemo(
     () => otsDelDiaCrudo.filter(o => !otsConfirmadasIds.has(o.id)),
     [otsDelDiaCrudo, otsConfirmadasIds]
@@ -319,7 +366,7 @@ function RutasExternoScreen() {
     setCargando(true);
     setErrorCarga(null);
     Promise.all([
-      window.RUTAS_EXTERNO_API.obtenerTecnicosDisponibles(),
+      window.RUTAS_EXTERNO_API.obtenerTecnicosDisponibles(fecha),
       window.RUTAS_EXTERNO_API.obtenerOtsDelDia(),
     ])
       .then(([tecnicos, ots]) => {
@@ -335,7 +382,7 @@ function RutasExternoScreen() {
       .catch(err => { if (activo) setErrorCarga(err.message); })
       .finally(() => { if (activo) setCargando(false); });
     return () => { activo = false; };
-  }, []);
+  }, [fecha]);
 
   // Si se elimina la confirmación, las OT que vuelven a quedar elegibles
   // necesitan entrar a otsSel (pre-tildadas) — quedaron afuera al cargar
@@ -349,22 +396,24 @@ function RutasExternoScreen() {
     });
   }, [otsDelDia]);
 
+  useEffect(() => rxSave(RX_KEYS.fecha, fecha), [fecha]);
   useEffect(() => rxSave(RX_KEYS.otsSel, otsSel), [otsSel]);
   useEffect(() => rxSave(RX_KEYS.tecSel, tecSel), [tecSel]);
   useEffect(() => rxSave(RX_KEYS.propuesta, propuesta), [propuesta]);
-  useEffect(() => rxSave(RX_KEYS.confirmado, confirmado), [confirmado]);
+  useEffect(() => rxSave(RX_KEYS.confirmados, confirmados), [confirmados]);
 
   const toggleOt = id => setOtsSel(prev => ({ ...prev, [id]: !prev[id] }));
   const toggleTec = id => setTecSel(prev => ({ ...prev, [id]: !prev[id] }));
-  const onEliminarConfirmado = () => setConfirmado(null);
-
-  // Reabre el plan confirmado en el panel de edición (mismas acciones de
-  // HU-03: reordenar/mover/eliminar). Si se vuelve a confirmar, reemplaza
-  // por completo la confirmación anterior; si se "vuelve a selección" sin
-  // confirmar, la confirmación original queda intacta (no se tocó todavía).
-  const onEditarConfirmado = () => {
-    if (!confirmado) return;
-    setPropuesta({ porTecnico: deepClone(confirmado.porTecnico), pendientes: [] });
+  // Reabre el plan confirmado de ese día en el panel de edición (mismas
+  // acciones de HU-03: reordenar/mover/eliminar). Si se vuelve a confirmar,
+  // reemplaza por completo la confirmación anterior de ese día; si se
+  // "vuelve a selección" sin confirmar, la confirmación original queda
+  // intacta (no se tocó todavía).
+  const onEditarConfirmado = (fechaConfirmado) => {
+    const c = confirmados[fechaConfirmado];
+    if (!c) return;
+    setFecha(fechaConfirmado);
+    setPropuesta({ porTecnico: deepClone(c.porTecnico), pendientes: [] });
     setError(null);
     setEtapa("propuesta");
   };
@@ -405,13 +454,19 @@ function RutasExternoScreen() {
     p.pendientes.push(ot);
     return p;
   });
+  const onMoverPendiente = (otId, toTecId) => updatePropuesta(p => {
+    const idx = p.pendientes.findIndex(o => o.id === otId);
+    const [ot] = p.pendientes.splice(idx, 1);
+    p.porTecnico[toTecId].paradas.push(ot);
+    return p;
+  });
 
   const onVolver = () => { setPropuesta(null); setError(null); setEtapa("seleccion"); };
 
   const onConfirmar = () => {
     const r = window.RUTAS_EXTERNO_OPTIMIZER.validarConfirmacion(propuesta.porTecnico);
     if (!r.ok) { setError(r.razon); return; }
-    setConfirmado({ porTecnico: propuesta.porTecnico, fecha: "Hoy" });
+    setConfirmados(prev => ({ ...prev, [fecha]: { porTecnico: propuesta.porTecnico, fecha } }));
     setPropuesta(null);
     setError(null);
     setEtapa("seleccion");
@@ -422,24 +477,27 @@ function RutasExternoScreen() {
       <div className="page-head">
         <div>
           <div className="page-title">Asignación de rutas</div>
-          <div className="page-sub">Maqueta Sprint 1 · HU-01, HU-02, HU-03 — técnicos desde el mock real (Render); OT pendiente</div>
         </div>
       </div>
 
-      {etapa === "seleccion" && confirmado && (
-        <ConfirmadoBanner confirmado={confirmado} onEditar={onEditarConfirmado} onEliminar={onEliminarConfirmado} />
-      )}
+      {etapa === "seleccion" && Object.values(confirmados)
+        .filter(c => Object.values(c.porTecnico).some(({ paradas }) => paradas.length > 0))
+        .sort((a, b) => a.fecha.localeCompare(b.fecha))
+        .map(c => (
+          <ConfirmadoBanner key={c.fecha} confirmado={c} onEditar={() => onEditarConfirmado(c.fecha)} />
+        ))}
 
       {cargando ? (
         <div className="card empty"><Icon name="refresh" />Cargando datos del día…</div>
       ) : errorCarga ? (
         <div className="card empty"><Icon name="alert" />No se pudo cargar el mock: {errorCarga}</div>
       ) : etapa === "seleccion" ? (
-        <SeleccionPanel otsDelDia={otsDelDia} tecnicosDisponibles={tecnicosDisponibles}
+        <SeleccionPanel fecha={fecha} onFechaChange={setFecha} otsDelDia={otsDelDia} tecnicosDisponibles={tecnicosDisponibles}
           otsSel={otsSel} tecSel={tecSel} toggleOt={toggleOt} toggleTec={toggleTec} onOptimizar={onOptimizar} />
       ) : (
         <PropuestaPanel propuesta={propuesta} error={error}
           onMoveUp={onMoveUp} onMoveDown={onMoveDown} onMover={onMover} onEliminar={onEliminar}
+          onMoverPendiente={onMoverPendiente}
           onVolver={onVolver} onConfirmar={onConfirmar} />
       )}
     </div>
